@@ -127,8 +127,8 @@
       'use strict';
 
       const API_URL = 'https://kaamelott.chaudie.re/api/random';
-      // Proxy CORS pour que le jeu fonctionne depuis github.io (pas d'Access-Control-Allow-Origin sur l'API)
-      const CORS_PROXY = 'https://corsproxy.io/?url=';
+      // Proxy CORS pour github.io (corsproxy.io renvoie 403 depuis github.io ; AllOrigins accepte toutes les origines)
+      const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
       // Liste des personnages (identique à docs/README-API-KAAMELOTT.md)
       const PERSONNAGES = [
@@ -225,7 +225,8 @@
         const url = CORS_PROXY + encodeURIComponent(apiUrl);
         const res = await fetch(url);
         if (!res.ok) throw new Error('Erreur réseau ' + res.status);
-        const data = await res.json();
+        // AllOrigins /raw renvoie le corps brut (JSON string)
+        const data = JSON.parse(await res.text());
         if (data.status !== 1) return null;
         let citationData = data.citation;
         if (Array.isArray(citationData)) citationData = citationData[0];
@@ -358,3 +359,4 @@
   </script>
 </body>
 </html>
+
