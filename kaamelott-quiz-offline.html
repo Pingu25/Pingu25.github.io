@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quiz Kaamelott – Devine le personnage (mode hors-ligne)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .citation-block { white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
+    #autocomplete-hint kbd { font-size: 0.85em; }
+
+    /* Mobile: espacement et lisibilité */
+    @media (max-width: 575.98px) {
+      body { padding-top: 0.5rem !important; padding-bottom: 1rem !important; }
+      .container { padding-left: 0.75rem; padding-right: 0.75rem; max-width: 100% !important; }
+      .quiz-title { font-size: 1.5rem; }
+      .quiz-lead { font-size: 0.95rem; }
+      .card-body { padding: 1rem !important; }
+      .citation-block { font-size: 0.95rem; padding: 0.75rem !important; }
+      .btn-lg { min-height: 48px; font-size: 1rem; }
+      #loading .spinner-border { width: 2.5rem !important; height: 2.5rem !important; }
+      #loading .card-body { padding: 2rem 1rem !important; }
+      body { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+    }
+    @media (min-width: 768px) {
+      #restart, #retry { width: auto !important; }
+    }
+
+    #loading:not(.d-none) { animation: fadeIn 0.35s ease-out; }
+    #game:not(.d-none) { animation: fadeIn 0.4s ease-out; }
+    #result:not(.d-none), #error:not(.d-none) { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    #loading .spinner-border { animation-duration: 0.9s; }
+    .citation-block.citation-enter { animation: citationFadeIn 0.5s ease-out forwards; }
+    @keyframes citationFadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #score.score-bump { animation: scoreBump 0.45s ease-out; }
+    @keyframes scoreBump { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+    #feedback:not(.d-none) { animation: fadeIn 0.3s ease-out; }
+  </style>
+</head>
+<body class="bg-light min-vh-100 py-3 py-md-4 px-2 px-md-0">
+  <div class="container" style="max-width: 640px;">
+    <div class="text-center mb-3 mb-md-4">
+      <h1 class="display-5 fw-bold quiz-title">Quiz Kaamelott</h1>
+      <p class="lead text-muted quiz-lead mb-0">Devine le personnage qui a dit la citation. Une erreur = fin de partie. <span class="badge bg-secondary">Toutes les citations chargées au démarrage</span></p>
+    </div>
+
+    <div id="loading" class="d-none">
+      <div class="card shadow-sm">
+        <div class="card-body text-center py-5">
+          <div class="spinner-border text-primary flex-shrink-0" role="status" style="width: 3rem; height: 3rem;"><span class="visually-hidden">Chargement</span></div>
+          <p id="loading-text" class="mt-2 mb-0 text-muted">Chargement des citations…</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="game" class="d-none">
+      <div class="card shadow-sm">
+        <div class="card-body p-3 p-md-4">
+          <div id="feedback" class="alert alert-success d-none mb-3" role="alert"></div>
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <span class="badge bg-primary rounded-pill fs-6">Score : <span id="score">0</span></span>
+            <span class="text-muted small">Citation <span id="counter">1</span></span>
+          </div>
+          <div id="citation" class="citation-block bg-light border-start border-4 border-primary p-3 rounded-end mb-3 mb-md-4"></div>
+          <label for="answer" class="form-label fw-semibold">Qui a dit cette citation ?</label>
+          <input type="text" class="form-control form-control-lg" id="answer" placeholder="Nom du personnage" autocomplete="off">
+          <div id="autocomplete-hint" class="d-none small text-muted mt-2" aria-live="polite"></div>
+          <button type="button" class="btn btn-primary btn-lg mt-3 w-100" id="submit">Valider</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="result" class="d-none">
+      <div class="card shadow-sm border-warning">
+        <div class="card-body p-3 p-md-4">
+          <div id="resultMessage" class="alert alert-warning" role="alert"></div>
+          <p class="h5 mb-3">Score final : <span id="finalScore" class="text-primary">0</span></p>
+          <button type="button" class="btn btn-outline-primary btn-lg w-100" id="restart">Rejouer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="error" class="d-none">
+      <div class="card shadow-sm border-danger">
+        <div class="card-body p-3 p-md-4">
+          <div id="errorText" class="alert alert-danger mb-3" role="alert"></div>
+          <button type="button" class="btn btn-outline-danger btn-lg w-100" id="retry">Réessayer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const API_ALL_URL = 'https://kaamelott.chaudie.re/api/all';
+      const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+
+      const PERSONNAGES = [
+        'Angharad', 'Anna', 'Appius Manilius', 'Arthur', 'Attila', 'Belt', 'Père Blaise', 'Bohort', 'Breccan',
+        'Le Roi Burgonde', 'Caius Camillus', 'Calogrenant', 'Capito', 'César', 'Cryda de Tintagel', 'Dagonet',
+        'La Dame du Lac', 'Demetra', 'Drusilla', 'Le Duc d\'Aquitaine', 'Edern', 'Elias de Kelliwic\'h', 'Galessin',
+        'Gauvain', 'Goustan', 'Grüdü', 'Guenièvre', 'Guethenoc', 'Hervé de Rinel', 'L\'interprète burgonde',
+        'Le Seigneur Jacca', 'Les Jumelles du pêcheur', 'Le Jurisconsulte', 'Kadoc', 'Karadoc', 'Lancelot',
+        'Léodagan', 'Loth', 'Le Maître d\'Armes', 'Méléagant', 'Manius Macrinus Firmus', 'Merlin', 'Mevanwi',
+        'Perceval', 'Roparzh', 'Lucius Sillius Sallustius', 'Séfriane d\'Aquitaine', 'Séli', 'Spurius Cordius Frontinius',
+        'Le Tavernier', 'Urgan', 'Vérinus', 'Venec', 'Ygerne', 'Yvain'
+      ];
+
+      function normalizeText(text) {
+        if (!text) return '';
+        text = text.normalize('NFD').replace(/\p{Mn}/gu, '');
+        text = text.toLowerCase().trim();
+        return text.replace(/\s+/g, ' ');
+      }
+
+      function getSuggestion(typed) {
+        const t = normalizeText(typed);
+        if (!t) return null;
+        for (let i = 0; i < PERSONNAGES.length; i++) {
+          const p = PERSONNAGES[i];
+          if (normalizeText(p).startsWith(t)) return p;
+        }
+        return null;
+      }
+
+      function updateAutocompleteHint() {
+        const val = el.answer.value.trim();
+        const suggestion = getSuggestion(val);
+        if (suggestion && suggestion !== val) {
+          el.autocompleteHint.textContent = '';
+          el.autocompleteHint.appendChild(document.createTextNode(suggestion + ' — '));
+          const kbd = document.createElement('kbd');
+          kbd.className = 'bg-secondary text-white px-1 rounded';
+          kbd.textContent = 'Tab';
+          el.autocompleteHint.appendChild(kbd);
+          el.autocompleteHint.appendChild(document.createTextNode(' pour compléter'));
+          el.autocompleteHint.classList.remove('d-none');
+          state.autocompleteSuggestion = suggestion;
+        } else {
+          el.autocompleteHint.classList.add('d-none');
+          el.autocompleteHint.textContent = '';
+          state.autocompleteSuggestion = null;
+        }
+      }
+
+      function levenshtein(a, b) {
+        const m = a.length, n = b.length;
+        const d = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+        for (let i = 0; i <= m; i++) d[i][0] = i;
+        for (let j = 0; j <= n; j++) d[0][j] = j;
+        for (let i = 1; i <= m; i++) {
+          for (let j = 1; j <= n; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+          }
+        }
+        return d[m][n];
+      }
+
+      function similarityRatio(a, b) {
+        if (a === b) return 1;
+        if (!a.length || !b.length) return 0;
+        const dist = levenshtein(a, b);
+        const maxLen = Math.max(a.length, b.length);
+        return 1 - dist / maxLen;
+      }
+
+      function checkAnswer(reponse, vraiPersonnage, seuil) {
+        seuil = seuil ?? 0.70;
+        const repNorm = normalizeText(reponse);
+        const vraiNorm = normalizeText(vraiPersonnage);
+        if (repNorm === vraiNorm) return { isCorrect: true, similarity: 1 };
+        const similarity = similarityRatio(repNorm, vraiNorm);
+        return { isCorrect: similarity >= seuil, similarity };
+      }
+
+      function wrapCitation(text, width) {
+        width = width || 40;
+        const lines = [];
+        for (let i = 0; i < text.length; i += width) {
+          lines.push(text.slice(i, i + width));
+        }
+        return lines.join('\n');
+      }
+
+      async function loadAllCitations() {
+        const url = CORS_PROXY + encodeURIComponent(API_ALL_URL);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Erreur réseau ' + res.status);
+        const data = JSON.parse(await res.text());
+        if (data.status !== 1 || !Array.isArray(data.citation)) return;
+        const list = [];
+        for (let i = 0; i < data.citation.length; i++) {
+          const item = data.citation[i];
+          const citation = item?.citation ?? '';
+          const infos = item?.infos ?? {};
+          const personnage = infos?.personnage ?? '';
+          if (citation && personnage) list.push({ citation, infos, personnage });
+        }
+        state.allCitations = list;
+      }
+
+      function getRandomCitation() {
+        if (!state.allCitations || state.allCitations.length === 0) return null;
+        const i = Math.floor(Math.random() * state.allCitations.length);
+        return state.allCitations[i];
+      }
+
+      const el = {
+        loading: document.getElementById('loading'),
+        loadingText: document.getElementById('loading-text'),
+        game: document.getElementById('game'),
+        citation: document.getElementById('citation'),
+        score: document.getElementById('score'),
+        counter: document.getElementById('counter'),
+        answer: document.getElementById('answer'),
+        submit: document.getElementById('submit'),
+        result: document.getElementById('result'),
+        resultMessage: document.getElementById('resultMessage'),
+        finalScore: document.getElementById('finalScore'),
+        restart: document.getElementById('restart'),
+        error: document.getElementById('error'),
+        errorText: document.getElementById('errorText'),
+        retry: document.getElementById('retry'),
+        feedback: document.getElementById('feedback'),
+        autocompleteHint: document.getElementById('autocomplete-hint'),
+      };
+
+      let state = { score: 0, counter: 1, current: null, autocompleteSuggestion: null, allCitations: [] };
+
+      function show(elName) {
+        el.loading.classList.add('d-none');
+        el.game.classList.add('d-none');
+        el.result.classList.add('d-none');
+        el.error.classList.add('d-none');
+        if (el[elName]) el[elName].classList.remove('d-none');
+      }
+
+      function showError(msg) {
+        el.errorText.textContent = msg;
+        show('error');
+      }
+
+      function loadCitation() {
+        const data = getRandomCitation();
+        if (!data) {
+          showError('Aucune citation disponible.');
+          return;
+        }
+        state.current = data;
+        el.citation.textContent = wrapCitation(data.citation);
+        el.citation.classList.add('citation-enter');
+        setTimeout(function () { el.citation.classList.remove('citation-enter'); }, 520);
+        el.score.textContent = state.score;
+        el.score.classList.add('score-bump');
+        setTimeout(function () { el.score.classList.remove('score-bump'); }, 480);
+        el.counter.textContent = state.counter;
+        el.answer.value = '';
+        state.autocompleteSuggestion = null;
+        el.autocompleteHint.classList.add('d-none');
+        el.autocompleteHint.textContent = '';
+        show('game');
+        el.answer.focus();
+      }
+
+      function endGame(correctPersonnage) {
+        el.resultMessage.className = 'alert alert-warning';
+        el.resultMessage.textContent = 'Faux. La bonne réponse était : ' + correctPersonnage;
+        el.finalScore.textContent = state.score;
+        show('result');
+      }
+
+      function onSubmit() {
+        el.answer.focus();
+        const reponse = el.answer.value.trim();
+        if (!reponse) return;
+        const { personnage } = state.current;
+        const { isCorrect } = checkAnswer(reponse, personnage, 0.70);
+
+        if (isCorrect) {
+          state.score += 1;
+          state.counter += 1;
+          el.feedback.textContent = 'Correct ! C\'était ' + personnage + '. [Score : ' + state.score + ']';
+          el.feedback.classList.remove('d-none');
+          el.submit.disabled = true;
+          el.answer.disabled = true;
+          setTimeout(function () {
+            el.feedback.classList.add('d-none');
+            el.submit.disabled = false;
+            el.answer.disabled = false;
+            el.answer.focus();
+            loadCitation();
+          }, 1500);
+          return;
+        }
+
+        endGame(personnage);
+      }
+
+      function startGame() {
+        state.score = 0;
+        state.counter = 1;
+        state.current = null;
+        state.autocompleteSuggestion = null;
+        loadCitation();
+      }
+
+      async function init() {
+        show('loading');
+        if (el.loadingText) el.loadingText.textContent = 'Chargement des citations…';
+        try {
+          await loadAllCitations();
+          const n = state.allCitations.length;
+          if (n === 0) {
+            showError('Aucune citation récupérée.');
+            return;
+          }
+          if (el.loadingText) el.loadingText.textContent = n + ' citation' + (n > 1 ? 's' : '') + ' chargée' + (n > 1 ? 's' : '') + '. Démarrage…';
+          setTimeout(function () {
+            startGame();
+          }, 400);
+        } catch (err) {
+          showError('Erreur : ' + (err.message || 'connexion ou CORS'));
+        }
+      }
+
+      function retryLoad() {
+        init();
+      }
+
+      el.submit.addEventListener('click', function () { el.answer.focus(); onSubmit(); });
+      el.answer.addEventListener('input', updateAutocompleteHint);
+      el.answer.addEventListener('keydown', function (e) {
+        if (e.key === 'Tab' && state.autocompleteSuggestion) {
+          e.preventDefault();
+          el.answer.value = state.autocompleteSuggestion;
+          state.autocompleteSuggestion = null;
+          el.autocompleteHint.classList.add('d-none');
+          el.autocompleteHint.textContent = '';
+          updateAutocompleteHint();
+          return;
+        }
+        if (e.key === 'Enter') { e.preventDefault(); onSubmit(); }
+      });
+      el.restart.addEventListener('click', startGame);
+      el.retry.addEventListener('click', retryLoad);
+
+      init();
+    })();
+  </script>
+</body>
+</html>
